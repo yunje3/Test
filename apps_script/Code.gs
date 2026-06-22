@@ -1,73 +1,66 @@
 /**
- * 팀 예산 관리 시스템 - Google Apps Script API
+ * Streamlit 예산관리 시스템용 Google Apps Script API
  *
- * 사용 방법:
- * 1) Google Sheets 파일 열기
- * 2) 확장 프로그램 > Apps Script
- * 3) 이 파일 내용을 Code.gs에 붙여넣기
- * 4) 배포 > 새 배포 > 웹 앱
- * 5) 실행 사용자: 나, 액세스 권한: 모든 사용자
+ * 사용 방법
+ * 1. Google Sheet 열기
+ * 2. 확장 프로그램 > Apps Script
+ * 3. 이 파일 내용을 Code.gs에 붙여넣기
+ * 4. 배포 > 새 배포 > 웹 앱
+ *    - 실행 사용자: 나
+ *    - 액세스 권한: 모든 사용자
+ * 5. 웹 앱 URL을 Streamlit app.py의 DEFAULT_WEB_APP_URL에 입력
  */
 
-const CONFIG = {
-  // Google Sheet 안의 시트 이름입니다. 없으면 자동 생성됩니다.
-  SHEET_NAME: 'budget_records',
-
-  // 스프레드시트에 묶인 Apps Script로 만들면 비워둬도 됩니다.
-  // 독립형 Apps Script로 만들었다면 Spreadsheet ID를 넣어주세요.
-  SPREADSHEET_ID: '',
-
-  // 선택 보안 키입니다.
-  // 비워두면 키 검사를 하지 않습니다.
-  // 더 안전하게 쓰려면 Apps Script의 프로젝트 설정 > 스크립트 속성에 APP_KEY를 저장하세요.
-  APP_KEY: '',
-};
-
+const SHEET_NAME = 'budget_records';
 const HEADERS = [
   'id',
-  'used_date',
+  'date',
   'month',
   'member',
   'category',
   'amount',
   'title',
   'memo',
-  'created_at',
-  'updated_at',
+  'created_at'
 ];
 
 function doGet(e) {
-  return handleRequest_(e);
-}
-
-function doPost(e) {
-  return handleRequest_(e);
-}
-
-function handleRequest_(e) {
   try {
-    const request = parseRequest_(e);
-    verifyApiKey_(request);
-
-    const action = request.action || 'list';
+    validateApiKey_(e);
+    const action = getParam_(e, 'action', 'list');
 
     if (action === 'health') {
-      const sheet = getSheet_();
-      return json_({ ok: true, message: 'ok', sheet_name: sheet.getName() });
+      return json_({ ok: true, message: 'ok' });
     }
 
     if (action === 'list') {
-      return json_({ ok: true, records: listRecords_() });
+      const records = readRecords_();
+      return json_({ ok: true, records: records });
     }
 
+    return json_({ ok: false, message: 'Unknown action: ' + action });
+  } catch (error) {
+    return json_({ ok: false, message: String(error) });
+  }
+}
+
+function doPost(e) {
+  try {
+    const body = parseBody_(e);
+    validateApiKeyFromBody_(body);
+
+    const action = body.action || '';
+
     if (action === 'add') {
-      const record = addRecord_(request.record || {});
-      return json_({ ok: true, record });
+      const record = body.record || {};
+      const saved = addRecord_(record);
+      return json_({ ok: true, record: saved });
     }
 
     if (action === 'delete') {
-      const deleted = deleteRecord_(request.id || request.record_id || '');
-      return json_({ ok: true, deleted });
+      const id = String(body.id || '');
+      deleteRecord_(id);
+      return json_({ ok: true });
     }
 
     if (action === 'clear') {
@@ -75,141 +68,100 @@ function handleRequest_(e) {
       return json_({ ok: true });
     }
 
-    throw new Error('지원하지 않는 action입니다: ' + action);
+    return json_({ ok: false, message: 'Unknown action: ' + action });
   } catch (error) {
-    return json_({ ok: false, error: String(error && error.message ? error.message : error) });
+    return json_({ ok: false, message: String(error) });
   }
-}
-
-function parseRequest_(e) {
-  let data = {};
-
-  if (e && e.postData && e.postData.contents) {
-    const content = e.postData.contents;
-    try {
-      data = JSON.parse(content);
-    } catch (error) {
-      data = {};
-    }
-  }
-
-  if (e && e.parameter) {
-    Object.keys(e.parameter).forEach(function (key) {
-      if (data[key] === undefined) {
-        data[key] = e.parameter[key];
-      }
-    });
-  }
-
-  return data;
-}
-
-function getConfiguredApiKey_() {
-  const scriptKey = PropertiesService.getScriptProperties().getProperty('APP_KEY') || '';
-  return scriptKey || CONFIG.APP_KEY || '';
-}
-
-function verifyApiKey_(request) {
-  const configuredKey = getConfiguredApiKey_();
-  if (!configuredKey) {
-    return;
-  }
-
-  const requestKey = request.api_key || '';
-  if (requestKey !== configuredKey) {
-    throw new Error('API Key가 일치하지 않습니다.');
-  }
-}
-
-function getSpreadsheet_() {
-  if (CONFIG.SPREADSHEET_ID) {
-    return SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
-  }
-
-  const active = SpreadsheetApp.getActiveSpreadsheet();
-  if (!active) {
-    throw new Error('활성 스프레드시트를 찾지 못했습니다. CONFIG.SPREADSHEET_ID를 입력해주세요.');
-  }
-
-  return active;
 }
 
 function getSheet_() {
-  const spreadsheet = getSpreadsheet_();
-  let sheet = spreadsheet.getSheetByName(CONFIG.SHEET_NAME);
+  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = spreadsheet.getSheetByName(SHEET_NAME);
 
   if (!sheet) {
-    sheet = spreadsheet.insertSheet(CONFIG.SHEET_NAME);
+    sheet = spreadsheet.insertSheet(SHEET_NAME);
   }
 
-  ensureHeader_(sheet);
+  const firstRow = sheet.getRange(1, 1, 1, HEADERS.length).getValues()[0];
+  const hasHeaders = firstRow.join('') !== '';
+
+  if (!hasHeaders) {
+    sheet.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS]);
+    sheet.setFrozenRows(1);
+  } else {
+    const normalized = firstRow.slice(0, HEADERS.length).map(String);
+    if (normalized.join('|') !== HEADERS.join('|')) {
+      sheet.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS]);
+      sheet.setFrozenRows(1);
+    }
+  }
+
   return sheet;
 }
 
-function ensureHeader_(sheet) {
-  const currentHeaders = sheet.getRange(1, 1, 1, HEADERS.length).getValues()[0];
-  const isSame = HEADERS.every(function (header, index) {
-    return currentHeaders[index] === header;
-  });
-
-  if (!isSame) {
-    sheet.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS]);
-    sheet.setFrozenRows(1);
-  }
-}
-
-function listRecords_() {
+function readRecords_() {
   const sheet = getSheet_();
   const lastRow = sheet.getLastRow();
 
-  if (lastRow <= 1) {
+  if (lastRow < 2) {
     return [];
   }
 
-  const rows = sheet.getRange(2, 1, lastRow - 1, HEADERS.length).getValues();
-  const records = [];
+  const values = sheet.getRange(2, 1, lastRow - 1, HEADERS.length).getValues();
 
-  rows.forEach(function (row) {
-    const record = {};
-    HEADERS.forEach(function (header, index) {
-      record[header] = normalizeValue_(row[index]);
+  return values
+    .filter(row => String(row[0] || '') !== '')
+    .map(row => {
+      const record = {};
+      HEADERS.forEach((header, index) => {
+        let value = row[index];
+        if (value instanceof Date) {
+          value = Utilities.formatDate(value, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+        }
+        record[header] = value;
+      });
+      record.amount = Number(record.amount || 0);
+      return record;
     });
-
-    if (String(record.id || '').trim() !== '') {
-      records.push(record);
-    }
-  });
-
-  return records;
 }
 
-function addRecord_(inputRecord) {
+function addRecord_(record) {
   const sheet = getSheet_();
-  const now = formatDateTime_(new Date());
-  const usedDate = String(inputRecord.used_date || formatDate_(new Date())).slice(0, 10);
+  const now = new Date();
+  const dateText = String(record.date || Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy-MM-dd'));
+  const monthText = String(record.month || dateText.substring(0, 7));
 
-  const record = {
-    id: inputRecord.id || Utilities.getUuid().replace(/-/g, '').slice(0, 12),
-    used_date: usedDate,
-    month: inputRecord.month || usedDate.slice(0, 7),
-    member: inputRecord.member || '',
-    category: inputRecord.category || '',
-    amount: Number(inputRecord.amount || 0),
-    title: inputRecord.title || '',
-    memo: inputRecord.memo || '',
-    created_at: inputRecord.created_at || now,
-    updated_at: inputRecord.updated_at || now,
+  const saved = {
+    id: String(Date.now()) + '-' + String(Math.floor(Math.random() * 100000)),
+    date: dateText,
+    month: monthText,
+    member: String(record.member || ''),
+    category: String(record.category || ''),
+    amount: Number(record.amount || 0),
+    title: String(record.title || ''),
+    memo: String(record.memo || ''),
+    created_at: Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss')
   };
 
-  sheet.appendRow(HEADERS.map(function (header) {
-    return record[header];
-  }));
+  if (!saved.member) {
+    throw new Error('팀원 값이 비어있습니다.');
+  }
+  if (!saved.category) {
+    throw new Error('예산 항목 값이 비어있습니다.');
+  }
+  if (!saved.title) {
+    throw new Error('내용 값이 비어있습니다.');
+  }
+  if (!saved.amount || saved.amount <= 0) {
+    throw new Error('금액은 0보다 커야 합니다.');
+  }
 
-  return record;
+  const row = HEADERS.map(header => saved[header]);
+  sheet.appendRow(row);
+  return saved;
 }
 
-function deleteRecord_(recordId) {
-  const id = String(recordId || '').trim();
+function deleteRecord_(id) {
   if (!id) {
     throw new Error('삭제할 id가 없습니다.');
   }
@@ -217,50 +169,71 @@ function deleteRecord_(recordId) {
   const sheet = getSheet_();
   const lastRow = sheet.getLastRow();
 
-  if (lastRow <= 1) {
-    return false;
+  if (lastRow < 2) {
+    return;
   }
 
-  const idRange = sheet.getRange(2, 1, lastRow - 1, 1);
-  const found = idRange.createTextFinder(id).matchEntireCell(true).findNext();
-
-  if (!found) {
-    return false;
+  const ids = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
+  for (let i = ids.length - 1; i >= 0; i--) {
+    if (String(ids[i][0]) === id) {
+      sheet.deleteRow(i + 2);
+      return;
+    }
   }
 
-  sheet.deleteRow(found.getRow());
-  return true;
+  throw new Error('해당 id를 찾을 수 없습니다: ' + id);
 }
 
 function clearRecords_() {
   const sheet = getSheet_();
   const lastRow = sheet.getLastRow();
 
-  if (lastRow > 1) {
+  if (lastRow >= 2) {
     sheet.getRange(2, 1, lastRow - 1, HEADERS.length).clearContent();
   }
-
-  ensureHeader_(sheet);
 }
 
-function normalizeValue_(value) {
-  if (value instanceof Date) {
-    return formatDateTime_(value);
+function parseBody_(e) {
+  if (!e || !e.postData || !e.postData.contents) {
+    return {};
   }
 
-  if (value === null || value === undefined) {
-    return '';
+  try {
+    return JSON.parse(e.postData.contents);
+  } catch (error) {
+    throw new Error('JSON 파싱 실패: ' + error);
+  }
+}
+
+function getParam_(e, name, defaultValue) {
+  if (!e || !e.parameter || e.parameter[name] === undefined) {
+    return defaultValue;
+  }
+  return e.parameter[name];
+}
+
+function validateApiKey_(e) {
+  const savedKey = PropertiesService.getScriptProperties().getProperty('APP_KEY');
+  if (!savedKey) {
+    return;
   }
 
-  return value;
+  const requestKey = getParam_(e, 'api_key', '');
+  if (requestKey !== savedKey) {
+    throw new Error('API key가 올바르지 않습니다.');
+  }
 }
 
-function formatDate_(date) {
-  return Utilities.formatDate(date, Session.getScriptTimeZone(), 'yyyy-MM-dd');
-}
+function validateApiKeyFromBody_(body) {
+  const savedKey = PropertiesService.getScriptProperties().getProperty('APP_KEY');
+  if (!savedKey) {
+    return;
+  }
 
-function formatDateTime_(date) {
-  return Utilities.formatDate(date, Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss');
+  const requestKey = String(body.api_key || '');
+  if (requestKey !== savedKey) {
+    throw new Error('API key가 올바르지 않습니다.');
+  }
 }
 
 function json_(data) {
