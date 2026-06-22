@@ -34,7 +34,7 @@ CATEGORIES = ["수선유지비", "비품", "개량공사"]
 
 # Streamlit Cloud에서 Secrets를 쓰지 않고 바로 실행하고 싶으면 아래에 Apps Script Web App URL을 직접 넣어도 된다.
 # 단, GitHub 공개 저장소라면 URL이 노출되므로 Streamlit Cloud의 Secrets 사용을 권장한다.
-DEFAULT_WEB_APP_URL = ""
+DEFAULT_WEB_APP_URL = "https://script.google.com/macros/s/1CA1qLn68BoxCN4GZ2Isva-_u0_rq-Xfb0dhmMsE-KjQ/exec"
 DEFAULT_API_KEY = ""
 
 CATEGORY_EMOJI = {
