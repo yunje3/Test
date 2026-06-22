@@ -130,7 +130,7 @@ def show_setup_error_if_needed():
 
         ```toml
         [apps_script]
-        web_app_url = "https://script.google.com/macros/s/배포_ID/exec"
+        web_app_url = "https://script.google.com/macros/s/1CA1qLn68BoxCN4GZ2Isva-_u0_rq-Xfb0dhmMsE-KjQ/exec"
         api_key = ""  # Apps Script에서 APP_KEY를 설정했을 때만 입력
         ```
         """
