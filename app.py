@@ -31,6 +31,12 @@ HEADERS = [
 
 MEMBERS = ["부장님", "팀원1", "팀원2", "팀원3", "팀원4"]
 CATEGORIES = ["수선유지비", "비품", "개량공사"]
+
+# Streamlit Cloud에서 Secrets를 쓰지 않고 바로 실행하고 싶으면 아래에 Apps Script Web App URL을 직접 넣어도 된다.
+# 단, GitHub 공개 저장소라면 URL이 노출되므로 Streamlit Cloud의 Secrets 사용을 권장한다.
+DEFAULT_WEB_APP_URL = ""
+DEFAULT_API_KEY = ""
+
 CATEGORY_EMOJI = {
     "수선유지비": "🛠️",
     "비품": "📦",
@@ -105,11 +111,32 @@ st.markdown(
 # Apps Script API 연결
 # -----------------------------
 def get_apps_script_config() -> Dict[str, str]:
-    """Streamlit secrets 또는 환경변수에서 Apps Script 연결 정보를 읽는다."""
-    apps_script_secrets = st.secrets.get("apps_script", {}) if hasattr(st, "secrets") else {}
+    """Streamlit Cloud Secrets, 환경변수, 기본값 순서로 Apps Script 연결 정보를 읽는다.
 
-    web_app_url = apps_script_secrets.get("web_app_url") or os.getenv("APPS_SCRIPT_WEB_APP_URL", "")
-    api_key = apps_script_secrets.get("api_key") or os.getenv("APPS_SCRIPT_API_KEY", "")
+    Streamlit Cloud에 Secrets가 아직 없거나 로컬에 .streamlit/secrets.toml이 없어도
+    앱이 바로 죽지 않도록 예외를 무시하고 안내 화면으로 넘어가게 한다.
+    """
+    apps_script_secrets: Dict[str, Any] = {}
+
+    try:
+        # Streamlit Cloud에서는 App settings > Secrets 값이 여기로 들어온다.
+        # 로컬에서는 .streamlit/secrets.toml 값이 여기로 들어온다.
+        apps_script_secrets = dict(st.secrets.get("apps_script", {}))
+    except Exception:
+        # secrets.toml이 없으면 FileNotFoundError가 날 수 있다.
+        # 이 경우 환경변수 또는 DEFAULT_WEB_APP_URL을 사용한다.
+        apps_script_secrets = {}
+
+    web_app_url = (
+        apps_script_secrets.get("web_app_url")
+        or os.getenv("APPS_SCRIPT_WEB_APP_URL", "")
+        or DEFAULT_WEB_APP_URL
+    )
+    api_key = (
+        apps_script_secrets.get("api_key")
+        or os.getenv("APPS_SCRIPT_API_KEY", "")
+        or DEFAULT_API_KEY
+    )
 
     return {
         "web_app_url": str(web_app_url).strip(),
@@ -124,15 +151,27 @@ def show_setup_error_if_needed():
         return
 
     st.error("Apps Script Web App URL이 설정되지 않았어.")
+    st.info("GitHub에는 .streamlit 폴더를 올리지 않아도 돼. Streamlit Cloud의 Secrets에 값을 넣으면 돼.")
     st.markdown(
         """
-        `.streamlit/secrets.toml` 파일을 만들고 아래처럼 입력해줘.
+        ### Streamlit Cloud에서 설정하는 방법
+
+        1. Streamlit Cloud 앱 화면에서 **Manage app** 클릭
+        2. **Settings** 클릭
+        3. **Secrets** 메뉴 열기
+        4. 아래 내용을 붙여넣기
+        5. **Save** 후 앱 재부팅
 
         ```toml
         [apps_script]
-        web_app_url = "https://script.google.com/macros/s/1CA1qLn68BoxCN4GZ2Isva-_u0_rq-Xfb0dhmMsE-KjQ/exec"
-        api_key = ""  # Apps Script에서 APP_KEY를 설정했을 때만 입력
+        web_app_url = "https://script.google.com/macros/s/배포_ID/exec"
+        api_key = ""
         ```
+
+        ### Secrets를 아예 쓰기 싫을 때
+
+        `app.py` 상단의 `DEFAULT_WEB_APP_URL` 값에 Apps Script Web App URL을 직접 넣어도 된다.
+        단, GitHub 공개 저장소라면 URL이 노출된다.
         """
     )
     st.stop()
